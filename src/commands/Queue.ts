@@ -1,7 +1,8 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { AudioPlayerStatus, AudioResource } from '@discordjs/voice';
 import { Command } from '../interfaces/Command';
-import { subscriptions, Track } from '../music/Subscription';
+import { subscriptions } from '../music/Subscription';
+import { Track } from '../music/Track';
 
 export const QueueCommand: Command = {
 	data: new SlashCommandBuilder()
@@ -14,15 +15,15 @@ export const QueueCommand: Command = {
 		if (subscription) {
             const current =
 				subscription.audioPlayer.state.status === AudioPlayerStatus.Idle
-					? 'Nothing is currently playing!'
-					: `Playing **${(subscription.audioPlayer.state.resource as AudioResource<Track>).metadata.title}**`;
+					? 'Nothing is currently singing!'
+					: `currently singing: **${(subscription.audioPlayer.state.resource as AudioResource<Track>).metadata.title}**`;
 
 			const queue = subscription.queue
 				.slice(0, 5)
 				.map((track, index) => `${index + 1}) ${track.title}`)
 				.join('\n');
 
-			await interaction.reply(`${current}\n\n${queue}`);
+			await interaction.reply(`whats up next cousin?\n\n${queue}\n\n${current}`);
 		} else {
 			await interaction.reply('Not playing in this server!');
 		}

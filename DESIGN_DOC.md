@@ -10,11 +10,9 @@ The bot uses **Slash Commands** (Discord Interactions) rather than traditional p
 
 ### 2.2 Audio Pipeline (Optimized)
 The audio system works on a **streaming** basis with a latency-optimized extraction process:
-1.  **Unified Search & Extraction**: When a `/play` command is received, the bot uses `youtube-dl-exec` (wrapper for `yt-dlp`) to fetch **both** the video metadata and the direct audio stream URL in a single process execution.
-    *   *Direct Mode*: If `yt-dlp` returns a direct connection URL (e.g., from Google's servers) immediately, it is used.
-    *   *Fallback Mode*: If the direct URL expires or isn't fetched initially (for queued items), it is lazily fetched just before playback.
-2.  **Download Strategy**: No files are written to the disk (`download=False`).
-3.  **Transcoding**: `FFmpeg` (via `ffmpeg-static`) connects to the direct URL and real-time transcodes the audio to **Opus** format which Discord requires.
+1.  **Unified Search & Extraction**: When a `/play` command is received, the `TrackFactory` uses `youtube-dl-exec` (wrapper for `yt-dlp`) to fetch video metadata.
+2.  **Piped Streaming**: Instead of fetching a direct URL (which can expire or be throttled), the bot spawns a child `yt-dlp` process that downloads audio and writes it to `stdout`.
+3.  **Transcoding**: This execution stream is piped directly into the Discord Voice connection. The stream is forced to **Webm/Opus** format (`bestaudio[ext=webm][acodec=opus][asr=48000]/bestaudio`) to minimize transcoding overhead.
 4.  **Transport**: The `@discordjs/voice` library sends the Opus packets via UDP to the Discord Voice Server, utilizing the **DAVE** (Discord Audio Verification/Encryption) protocol.
 
 ### 2.3 State Management
@@ -31,20 +29,21 @@ The audio system works on a **streaming** basis with a latency-optimized extract
 ### 3.1 Command Handler
 Registers slash commands with Discord using `discord.js`. It routes incoming interactions to specific command files (`src/commands/*.ts`). It handles deferrals (`await interaction.deferReply()`) to prevent timeouts during the `yt-dlp` extraction process.
 
-### 3.2 Music Service (Extractor)
-*   **Library**: `youtube-dl-exec` (executes the `yt-dlp` binary).
-*   **Optimization**:
-    *   `format`: `bestaudio` (High quality streaming).
-    *   `noWarnings`, `noCheckCertificates`, `dumpSingleJson`: Arguments tuned for speed and reliability.
-    *   **Rapid Start**: The first track's stream URL is fetched *during* the command execution and passed directly to the player, eliminating the need for a second extraction step when playback begins.
+### 3.2 TrackFactory (Extractor)
+A centralized factory class (`src/music/Track.ts`) responsible for resolving media:
+*   **Resolution**: Converts search queries or URLs into `TrackData` objects.
+*   **Stream Generation**: Generates `Readable` streams using `yt-dlp`'s `exec` function.
+    *   **Latency Optimization**: Removed bandwidth limiting (`limit-rate`) to allow maximum burst speed for initial buffering.
+    *   **Format Targeting**: Requests `bestaudio[ext=webm][acodec=opus][asr=48000]/bestaudio` specifically for Discord compatibility.
+    *   **Abstraction**: Decouples the "Search" logic from the "Play" logic.
 
 ### 3.3 Audio Player (`MusicSubscription.ts`)
 *   **Role**: Manages the connection to the voice channel and sends audio data.
 *   **Process**:
     *   Manages a `VoiceConnection`.
-    *   Uses `createAudioResource` to stream data from the URL provided by the extractor.
+    *   Uses `createAudioResource` with `StreamType.WebmOpus` to pipe data efficiently.
     *   Handles "Idle" -> "Playing" state transitions to process the queue automatically.
-    *   **Resiliency**: Auto-reconnects on temporary network disconnects or channel moves.
+    *   **Resiliency**: Auto-reconnects on temporary network disconnects or channel moves with exponential backoff logic (protected against negative timeout errors).
 
 ### 3.4 Queue Manager
 A queue processing system that handles the playlist logic.
@@ -61,12 +60,12 @@ A queue processing system that handles the playlist logic.
 2.  **Bot** defers response.
 3.  **Bot** checks connectivity; joins voice channel if needed.
 4.  **Bot** executes `yt-dlp` search.
-    *   *Output*: Video Metadata (Title, etc.) **AND** Direct Stream URL.
-5.  **Bot** creates a `Track` object containing both the Metadata and the Stream URL.
+    *   *Output*: Video Metadata (Title, etc.). Direct stream URL generation is deferred to playback time for reliability.
+5.  **Bot** creates a `Track` object containing the Metadata.
 6.  **Bot** enqueues the track.
 7.  **Check**:
-    *   If **Idle**: The `Subscription` sees the `Track` has a `streamUrl` pre-loaded. It skips the extraction step and streams immediately.
-    *   If **Playing**: Adds to queue. Only metadata is stored; the Stream URL (which might expire) is discarded or lazily refreshed when the song eventually plays.
+    *   If **Idle**: The `Subscription` processes the queue immediately.
+    *   If **Playing**: Adds to queue. Metadata is stored; the Stream is created only when the song actually starts playing.
 
 ### 4.2 Play Next Logic
 1.  **Event**: Song finishes.

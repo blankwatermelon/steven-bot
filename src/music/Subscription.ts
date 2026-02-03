@@ -8,23 +8,15 @@ import {
 	VoiceConnection,
 	VoiceConnectionDisconnectReason,
 	VoiceConnectionStatus,
+    StreamType,
 } from '@discordjs/voice';
-import youtubedl from 'youtube-dl-exec';
 import { GuildMember, Snowflake } from 'discord.js';
+import { Track, TrackFactory } from './Track';
 
 /**
  * Maps guild IDs to music subscriptions, which exist if the bot has an active VoiceConnection to the guild.
  */
 export const subscriptions = new Map<Snowflake, MusicSubscription>();
-
-export interface Track {
-	url: string;
-	title: string;
-    streamUrl?: string;
-	onStart?: () => void;
-	onFinish?: () => void;
-	onError?: (error: Error) => void;
-}
 
 /**
  * A MusicSubscription exists for each active VoiceConnection. Each subscription has its own audio player and queue,
@@ -156,23 +148,12 @@ export class MusicSubscription {
 			// Attempt to convert the Track into an AudioResource (i.e. start streaming)
             console.log(`[Subscription] Processing track: ${nextTrack.url} - ${nextTrack.title}`);
 
-            let streamUrl = nextTrack.streamUrl;
-
-            if (!streamUrl) {
-                 console.log(`[Subscription] Stream URL not found in track, fetching...`);
-                 // Get the direct audio url
-                const output = await youtubedl(nextTrack.url, {
-                    getUrl: true,
-                    format: 'bestaudio',
-                    noWarnings: true,
-                    noCheckCertificates: true
-                });
-                streamUrl = output.toString().trim();
-            }
-            // console.log(`[Subscription] Stream URL: ${streamUrl}`);
+            const stream = TrackFactory.getStream(nextTrack.url);
 			
-			const resource = createAudioResource(streamUrl!, {
+			const resource = createAudioResource(stream, {
 				metadata: nextTrack,
+                inputType: StreamType.WebmOpus,
+                inlineVolume: true
 			});
 			
 			this.audioPlayer.play(resource);

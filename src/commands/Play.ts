@@ -1,8 +1,8 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { joinVoiceChannel, entersState, VoiceConnectionStatus } from '@discordjs/voice';
 import { Command } from '../interfaces/Command';
-import { MusicSubscription, subscriptions, Track } from '../music/Subscription';
-import youtubedl from 'youtube-dl-exec';
+import { MusicSubscription, subscriptions } from '../music/Subscription';
+import { Track, TrackFactory } from '../music/Track';
 
 export const PlayCommand: Command = {
 	data: new SlashCommandBuilder()
@@ -23,7 +23,7 @@ export const PlayCommand: Command = {
         // check if user is in voice channel
         const member = interaction.member as any; 
         if (!member.voice.channel) {
-            await interaction.followUp('You need to be in a voice channel to play music!');
+            await interaction.followUp('You need to be in a voice channel for me to sing!');
             return;
         }
 
@@ -51,66 +51,33 @@ export const PlayCommand: Command = {
 		}
 
         try {
-            // Search logic logic
-            let url = query;
-            let title = 'Unknown Title';
-            let streamUrl: string | undefined;
+            const trackData = await TrackFactory.getVideoData(query);
 
-            const output = await youtubedl(query, {
-                dumpSingleJson: true,
-                noWarnings: true,
-                noCheckCertificates: true,
-                defaultSearch: 'ytsearch1',
-                format: 'bestaudio', // Ask for best audio immediately
-            });
-
-            let videoInfo: any;
-            
-            // TypeScript check for the output type, assuming it mimics the JSON structure
-            if ((output as any).entries && (output as any).entries.length > 0) {
-                 videoInfo = (output as any).entries[0];
-            } else if ((output as any).entries && (output as any).entries.length === 0) {
-                 await interaction.followUp('No results found!');
-                 return;
-            } else {
-                 videoInfo = output;
-            }
-
-            // Prefer webpage_url, fallback to url (which might be the ID or internal URL)
-            url = videoInfo.webpage_url || videoInfo.url;
-            title = videoInfo.title;
-            // Optimistically grab the stream URL if available
-            if (videoInfo.url && videoInfo.url.startsWith('http')) {
-                streamUrl = videoInfo.url;
-            }
-
-            if (!url) {
-                 await interaction.followUp('Could not resolve video URL.');
+            if (!trackData) {
+                 await interaction.followUp('Diu, no results found!');
                  return;
             }
 
             const track: Track = {
-                url,
-                title,
-                streamUrl,
+                ...trackData,
                 onStart: () => {
-                    (interaction.channel as any)?.send(`Now singing **${title}**!`).catch(console.warn);
+                    (interaction.channel as any)?.send(`Now singing **${trackData.title}**!`).catch(console.warn);
                 },
                 onFinish: () => {
                    // Optional: Notify when finished
                 },
                 onError: (error) => {
                     console.warn(error);
-                    (interaction.channel as any)?.send(`Error singing **${title}**!`).catch(console.warn);
+                    (interaction.channel as any)?.send(`Diu, error singing **${trackData.title}**!`).catch(console.warn);
                 } 
             };
 
             subscription.enqueue(track);
-            await interaction.followUp(`Enqueued **${title}**`);
+            await interaction.followUp(`Enqueued **${trackData.title}**`);
 
         } catch (error) {
             console.error(error);
-            await interaction.followUp('Failed to play track, please try again later!');
+            await interaction.followUp('Diu, failed to play track, please try again later!');
         }
 	},
 };
