@@ -1,0 +1,187 @@
+import {
+	AudioPlayer,
+	AudioPlayerStatus,
+	AudioResource,
+	createAudioPlayer,
+	createAudioResource,
+	entersState,
+	VoiceConnection,
+	VoiceConnectionDisconnectReason,
+	VoiceConnectionStatus,
+} from '@discordjs/voice';
+import youtubedl from 'youtube-dl-exec';
+import { GuildMember, Snowflake } from 'discord.js';
+
+/**
+ * Maps guild IDs to music subscriptions, which exist if the bot has an active VoiceConnection to the guild.
+ */
+export const subscriptions = new Map<Snowflake, MusicSubscription>();
+
+export interface Track {
+	url: string;
+	title: string;
+    streamUrl?: string;
+	onStart?: () => void;
+	onFinish?: () => void;
+	onError?: (error: Error) => void;
+}
+
+/**
+ * A MusicSubscription exists for each active VoiceConnection. Each subscription has its own audio player and queue,
+ * and it also handles the state of the voice connection (e.g. unexpected disconnects).
+ */
+export class MusicSubscription {
+	public readonly voiceConnection: VoiceConnection;
+	public readonly audioPlayer: AudioPlayer;
+	public queue: Track[];
+	public queueLock = false;
+	public readyLock = false;
+
+	public constructor(voiceConnection: VoiceConnection) {
+		this.voiceConnection = voiceConnection;
+		this.audioPlayer = createAudioPlayer();
+		this.queue = [];
+
+		this.voiceConnection.on('stateChange', async (_, newState) => {
+			if (newState.status === VoiceConnectionStatus.Disconnected) {
+				if (newState.reason === VoiceConnectionDisconnectReason.WebSocketClose && newState.closeCode === 4014) {
+					/**
+					 * If the WebSocket closed with a 4014 code, this means that we should not manually attempt to reconnect,
+					 * but there is a chance the connection will recover itself if the reason of the disconnect was due to
+					 * switching voice channels. This is also the same behavior for the voice connection being forcibly kicked.
+					 */
+					try {
+						await entersState(this.voiceConnection, VoiceConnectionStatus.Connecting, 5_000);
+						// Probably moved voice channel
+					} catch {
+						this.voiceConnection.destroy();
+						// Probably removed from voice channel
+					}
+				} else if (this.voiceConnection.rejoinAttempts < 5) {
+					/**
+					 * The disconnect in this case is recoverable, and we also have <5 repeated attempts so we will reconnect.
+					 */
+					await new Promise((resolve) => setTimeout(resolve, (this.voiceConnection.rejoinAttempts + 1) * 5_000));
+					this.voiceConnection.rejoin();
+				} else {
+					/**
+					 * The disconnect in this case may be recoverable, but we have no more remaining attempts - destroy.
+					 */
+					this.voiceConnection.destroy();
+				}
+			} else if (newState.status === VoiceConnectionStatus.Destroyed) {
+				/**
+				 * Once destroyed, stop the subscription.
+				 */
+				this.stop();
+			} else if (
+				!this.readyLock &&
+				(newState.status === VoiceConnectionStatus.Connecting || newState.status === VoiceConnectionStatus.Signalling)
+			) {
+				/**
+				 * In the Signalling or Connecting states, we set a 20 second time limit for the connection to become ready
+				 * before destroying the voice connection. This stops the voice connection permanently existing in one of these
+				 * states.
+				 */
+				this.readyLock = true;
+				try {
+					await entersState(this.voiceConnection, VoiceConnectionStatus.Ready, 20_000);
+				} catch {
+					if (this.voiceConnection.state.status !== VoiceConnectionStatus.Destroyed) this.voiceConnection.destroy();
+				} finally {
+					this.readyLock = false;
+				}
+			}
+		});
+
+		// Configure audio player
+		this.audioPlayer.on('stateChange', (oldState, newState) => {
+			if (newState.status === AudioPlayerStatus.Idle && oldState.status !== AudioPlayerStatus.Idle) {
+				// If the Idle state is entered from a non-Idle state, it means that an audio resource has finished playing.
+				// The queue is then processed to start playing the next track.
+				(oldState.resource as AudioResource<Track>).metadata.onFinish?.();
+				this.processQueue();
+			} else if (newState.status === AudioPlayerStatus.Playing) {
+				// If the Playing state has been entered, then a new track has started playback.
+				(newState.resource as AudioResource<Track>).metadata.onStart?.();
+			}
+		});
+
+		this.audioPlayer.on('error', (error) => {
+			(error.resource as AudioResource<Track>).metadata.onError?.(error);
+			this.processQueue();
+		});
+
+		voiceConnection.subscribe(this.audioPlayer);
+	}
+
+	/**
+	 * Adds a new Track to the queue.
+	 *
+	 * @param track The track to add to the queue
+	 */
+	public enqueue(track: Track) {
+		this.queue.push(track);
+		this.processQueue();
+	}
+
+	/**
+	 * Stops audio playback and empties the queue.
+	 */
+	public stop() {
+		this.queueLock = true;
+		this.queue = [];
+		this.audioPlayer.stop(true);
+	}
+
+	/**
+	 * Attempts to play a Track from the queue.
+	 */
+	private async processQueue(): Promise<void> {
+		// If the queue is locked (already processing), is empty, or the audio player is already playing something, return
+		if (this.queueLock || this.audioPlayer.state.status !== AudioPlayerStatus.Idle || this.queue.length === 0) {
+			return;
+		}
+		// Lock the queue to guarantee safe access
+		this.queueLock = true;
+
+		// Take the first item from the queue
+		const nextTrack = this.queue.shift();
+		if (!nextTrack) {
+			this.queueLock = false;
+			return;
+		}
+
+		try {
+			// Attempt to convert the Track into an AudioResource (i.e. start streaming)
+            console.log(`[Subscription] Processing track: ${nextTrack.url} - ${nextTrack.title}`);
+
+            let streamUrl = nextTrack.streamUrl;
+
+            if (!streamUrl) {
+                 console.log(`[Subscription] Stream URL not found in track, fetching...`);
+                 // Get the direct audio url
+                const output = await youtubedl(nextTrack.url, {
+                    getUrl: true,
+                    format: 'bestaudio',
+                    noWarnings: true,
+                    noCheckCertificates: true
+                });
+                streamUrl = output.toString().trim();
+            }
+            // console.log(`[Subscription] Stream URL: ${streamUrl}`);
+			
+			const resource = createAudioResource(streamUrl!, {
+				metadata: nextTrack,
+			});
+			
+			this.audioPlayer.play(resource);
+			this.queueLock = false;
+		} catch (error) {
+			// If an error occurred, try the next item of the queue instead
+			nextTrack.onError?.(error as Error);
+			this.queueLock = false;
+			return this.processQueue();
+		}
+	}
+}
