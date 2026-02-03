@@ -77,7 +77,3 @@ npm start
 3.  **Optimization**: The extraction happens in a single pass to fetch both metadata and the stream URL simultaneously, reducing initial latency.
 4.  **Audio Pipeline**: The Direct URL is piped into `FFmpeg` (provided by `ffmpeg-static`) to transcode the stream into Opus packets.
 5.  **Transmission**: Packets are encrypted and sent via UDP to Discord's Voice Servers using `@discordjs/voice`.
-
-## 📝 License
-
-ISC
