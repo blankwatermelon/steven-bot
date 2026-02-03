@@ -1,99 +1,103 @@
 # Discord Music Bot Design Document
 
 ## 1. Overview
-This document outlines the architecture and design of a Discord Music Bot capable of streaming audio from YouTube directly to a Discord voice channel. The bot is designed to be lightweight, avoiding local file storage by streaming content on-the-fly.
+This document outlines the architecture and design of a Discord Music Bot built with **TypeScript** and **Node.js**. It is capable of streaming audio from YouTube directly to a Discord voice channel. The bot is designed to be lightweight, avoiding local file storage by streaming content on-the-fly, and has been optimized for low-latency playback start times.
 
 ## 2. System Architecture
 
 ### 2.1 Interaction Model
 The bot uses **Slash Commands** (Discord Interactions) rather than traditional prefix-based messages. This provides a better UI/UX and handles user inputs (like search queries) more cleanly.
 
-### 2.2 Audio Pipeline
-The audio system works on a **streaming** basis:
-1.  **Search**: `yt-dlp` searches YouTube for metadata and extracts the direct audio stream URL (e.g., a `.webm` or `.m4a` link from Google's servers).
+### 2.2 Audio Pipeline (Optimized)
+The audio system works on a **streaming** basis with a latency-optimized extraction process:
+1.  **Unified Search & Extraction**: When a `/play` command is received, the bot uses `youtube-dl-exec` (wrapper for `yt-dlp`) to fetch **both** the video metadata and the direct audio stream URL in a single process execution.
+    *   *Direct Mode*: If `yt-dlp` returns a direct connection URL (e.g., from Google's servers) immediately, it is used.
+    *   *Fallback Mode*: If the direct URL expires or isn't fetched initially (for queued items), it is lazily fetched just before playback.
 2.  **Download Strategy**: No files are written to the disk (`download=False`).
-3.  **Transcoding**: `FFmpeg` connects to the direct URL and real-time transcodes the audio to **Opus** format which Discord requires.
-4.  **Transport**: The Discord library sends the Opus packets via UDP to the Discord Voice Server.
+3.  **Transcoding**: `FFmpeg` (via `ffmpeg-static`) connects to the direct URL and real-time transcodes the audio to **Opus** format which Discord requires.
+4.  **Transport**: The `@discordjs/voice` library sends the Opus packets via UDP to the Discord Voice Server, utilizing the **DAVE** (Discord Audio Verification/Encryption) protocol.
 
 ### 2.3 State Management
 *   **Scope**: State is managed per **Guild** (Server). This creates a multi-tenant architecture where playing music in Server A does not affect Server B.
-*   **Storage**: In-memory Dictionary.
-    *   Key: `Guild ID` (String)
-    *   Value: `Queue` (FIFO collection) of songs.
+*   **Storage**: In-memory `Map`.
+    *   Key: `Guild ID` (`Snowflake`)
+    *   Value: `MusicSubscription` object containing:
+        *   `VoiceConnection`
+        *   `AudioPlayer`
+        *   `Queue` (FIFO Array of `Track` objects)
 
 ## 3. Core Components
 
 ### 3.1 Command Handler
-Registers slash commands with Discord and routes incoming interactions to specific functions. It handles deferrals (`await interaction.response.defer()`) to prevent timeouts during long API calls.
+Registers slash commands with Discord using `discord.js`. It routes incoming interactions to specific command files (`src/commands/*.ts`). It handles deferrals (`await interaction.deferReply()`) to prevent timeouts during the `yt-dlp` extraction process.
 
 ### 3.2 Music Service (Extractor)
-*   **Role**: Interfaces with YouTube.
-*   **Library Equivalent**: `yt-dlp` (Python), `ytdl-core` (Node.js), `Lavalink` (Java - external service).
-*   **Configuration**:
+*   **Library**: `youtube-dl-exec` (executes the `yt-dlp` binary).
+*   **Optimization**:
     *   `format`: `bestaudio` (High quality streaming).
-    *   `noplaylist`: True (Single song only).
-    *   `download`: False (Memory-only extraction).
+    *   `noWarnings`, `noCheckCertificates`, `dumpSingleJson`: Arguments tuned for speed and reliability.
+    *   **Rapid Start**: The first track's stream URL is fetched *during* the command execution and passed directly to the player, eliminating the need for a second extraction step when playback begins.
 
-### 3.3 Audio Player
+### 3.3 Audio Player (`MusicSubscription.ts`)
 *   **Role**: Manages the connection to the voice channel and sends audio data.
 *   **Process**:
-    *   Requires a "Voice Connection" to a specific channel.
-    *   Spawns an FFmpeg process to handle streams.
-    *   **Stereo Injection**: Forces 2 channels (`-ac 2`) and High Bitrate (`192k`).
+    *   Manages a `VoiceConnection`.
+    *   Uses `createAudioResource` to stream data from the URL provided by the extractor.
+    *   Handles "Idle" -> "Playing" state transitions to process the queue automatically.
+    *   **Resiliency**: Auto-reconnects on temporary network disconnects or channel moves.
 
 ### 3.4 Queue Manager
 A queue processing system that handles the playlist logic.
-*   **Structure**: `Map<GuildID, Deque<(URL, Title)>>`
+*   **Structure**: `Array<Track>` inside `MusicSubscription`.
 *   **Logic**:
-    1.  User adds song -> Push to back of Queue.
-    2.  Player finishes song -> Trigger `after_play` callback -> Pop from front of Queue -> Play.
+    1.  User adds song -> Push to `queue`.
+    2.  If player is Idle -> Process immediately.
+    3.  Player finishes song -> Trigger `AudioPlayerStatus.Idle` event -> Shift next track from queue -> Play.
 
 ## 4. Control Flows
 
-### 4.1 Play Command Flow
+### 4.1 Play Command Flow (Optimized)
 1.  **User** connects to Voice Channel and invokes `/play query`.
-2.  **Bot** defers response (shows "Thinking...").
-3.  **Bot** checks if connected to voice; if not, connects.
-4.  **Bot** runs `yt-dlp` search (Blocking I/O moved to background thread).
-5.  **Bot** extracts direct URL.
-6.  **Bot** adds song to `Queue`.
+2.  **Bot** defers response.
+3.  **Bot** checks connectivity; joins voice channel if needed.
+4.  **Bot** executes `yt-dlp` search.
+    *   *Output*: Video Metadata (Title, etc.) **AND** Direct Stream URL.
+5.  **Bot** creates a `Track` object containing both the Metadata and the Stream URL.
+6.  **Bot** enqueues the track.
 7.  **Check**:
-    *   If **Playing**: Send "Added to queue" message.
-    *   If **Idle**: Play immediately.
+    *   If **Idle**: The `Subscription` sees the `Track` has a `streamUrl` pre-loaded. It skips the extraction step and streams immediately.
+    *   If **Playing**: Adds to queue. Only metadata is stored; the Stream URL (which might expire) is discarded or lazily refreshed when the song eventually plays.
 
-### 4.2 Play Next Logic (The Loop)
-This is a recursive or callback-based loop that ensures continuous playback.
-1.  **Event**: Song finishes (or error occurs).
-2.  **Action**: Check `Queue` for `GuildID`.
-3.  **Condition**:
-    *   **Queue Empty**: Disconnect connection / Wait.
-    *   **Queue Has Items**:
-        1.  Pop next Item `(URL, Title)`.
-        2.  Create FFmpeg Audio Source.
-        3.  Start Playback.
-        4.  Register `after_play` callback to point back to Step 1.
+### 4.2 Play Next Logic
+1.  **Event**: Song finishes.
+2.  **Action**: `AudioPlayer` enters `Idle` state.
+3.  **Logic**:
+    *   Check `queue` length.
+    *   If empty: Wait / Do nothing.
+    *   If has items:
+        1.  Shift next `Track`.
+        2.  Check for `streamUrl`. If missing (expired or not fetched), run `yt-dlp` specifically for this URL.
+        3.  Create Audio Resource.
+        4.  Play.
 
 ## 5. Command Interface
 
 | Command | Parameter | Description |
 | :--- | :--- | :--- |
-| `/play` | `song_query` (String) | Searches YouTube and adds to queue (or plays if empty). |
-| `/skip` | None | Stops current track. The `on_finish` handler will automatically play the next track. |
-| `/pause` | None | Pauses the audio stream without disconnecting. |
-| `/resume` | None | Resumes a paused stream. |
-| `/stop` | None | Clears the queue and disconnects the bot from the voice channel. |
+| `/play` | `song` (String) | Searches YouTube and adds to queue. Starts playback immediately if idle. |
+| `/skip` | None | Stops the current resource. The player handles the transition to the next song automatically. |
+| `/queue` | None | Displays the currently playing song and the next 5 tracks. |
+| `/leave` | None | Destroys the voice connection and clears the queue. |
 
-## 6. Implementation Requirements (for different languages)
+## 6. Implementation Notes
 
-If porting this to another language (e.g., JavaScript/Node.js, Go, C#), ensure the following prerequisites are met:
-
-1.  **Discord Library**: Must check support for **Voice** and **Slash Commands**.
-    *   *Node.js*: `discord.js` + `@discordjs/voice`.
-    *   *Go*: `discordgo`.
-    *   *C#*: `Discord.Net`.
-2.  **FFmpeg**: The host machine must have FFmpeg installed and accessible in the system PATH.
-3.  **Opus Support**: Discord voice requires Opus encoding. Some libraries need a native binding (like `sodium` or `opusscript`).
-4.  **Youtube Extractor**: You need a reliable way to get the *direct stream URL*. `yt-dlp` works best as a subprocess, but native libraries exist.
+*   **Language**: TypeScript / Node.js.
+*   **Dependencies**:
+    *   `discord.js`: REST/WebSocket interaction.
+    *   `@discordjs/voice`: Audio packet sending.
+    *   `youtube-dl-exec`: YouTube extraction.
+    *   `ffmpeg-static`: Portable FFmpeg binary.
+    *   `libsodium-wrappers` & `@snazzah/davey`: Encryption support.
 
 ## 7. Pseudo-Code (Language Agnostic)
 
