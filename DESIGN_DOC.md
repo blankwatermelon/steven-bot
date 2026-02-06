@@ -13,7 +13,7 @@ The audio system works on a **streaming** basis with a latency-optimized extract
 1.  **Unified Search & Extraction**: When a `/play` command is received, the `TrackFactory` uses `youtube-dl-exec` (wrapper for `yt-dlp`) to fetch video metadata.
 2.  **Piped Streaming**: Instead of fetching a direct URL (which can expire or be throttled), the bot spawns a child `yt-dlp` process that downloads audio and writes it to `stdout`.
 3.  **Transcoding**: This execution stream is piped directly into the Discord Voice connection. The stream is forced to **Webm/Opus** format (`bestaudio[ext=webm][acodec=opus][asr=48000]/bestaudio`) to minimize transcoding overhead.
-4.  **Transport**: The `@discordjs/voice` library sends the Opus packets via UDP to the Discord Voice Server, utilizing the **DAVE** (Discord Audio Verification/Encryption) protocol.
+4.  **Transport**: The `@discordjs/voice` library sends the Opus packets via UDP to the Discord Voice Server.
 
 ### 2.3 State Management
 *   **Scope**: State is managed per **Guild** (Server). This creates a multi-tenant architecture where playing music in Server A does not affect Server B.
@@ -42,7 +42,7 @@ A centralized factory class (`src/music/Track.ts`) responsible for resolving med
 *   **Process**:
     *   Manages a `VoiceConnection`.
     *   Uses `createAudioResource` with `StreamType.WebmOpus` to pipe data efficiently.
-    *   Handles "Idle" -> "Playing" state transitions to process the queue automatically.
+    *   **Auto-Disconnect**: Automatically destroys the connection after 30 seconds of inactivity (Idle state) to save resources.
     *   **Resiliency**: Auto-reconnects on temporary network disconnects or channel moves with exponential backoff logic (protected against negative timeout errors).
 
 ### 3.4 Queue Manager
@@ -95,38 +95,7 @@ A queue processing system that handles the playlist logic.
     *   `discord.js`: REST/WebSocket interaction.
     *   `@discordjs/voice`: Audio packet sending.
     *   `youtube-dl-exec`: YouTube extraction.
-    *   `ffmpeg-static`: Portable FFmpeg binary.
-    *   `libsodium-wrappers` & `@snazzah/davey`: Encryption support.
+    *   `ffmpeg-static`: Portable FFmpeg binary. The bot automatically injects this into the `PATH` at runtime (`src/index.ts`) so external dependencies like `yt-dlp` can find it.
+    *   `libsodium-wrappers`: Encryption support.
 
-## 7. Pseudo-Code (Language Agnostic)
 
-```text
-Global Map queues;
-
-Function PlayCommand(user, query):
-    voiceConn = ConnectToChannel(user.voiceChannel)
-    songInfo = YouTubeExtract(query) // Get URL without downloading
-    
-    queues[guildID].push(songInfo)
-    
-    If NOT voiceConn.isPlaying:
-        PlayNext(guildID)
-
-Function PlayNext(guildID):
-    If queues[guildID] is empty:
-        voiceConn.Disconnect()
-        Return
-
-    song = queues[guildID].pop()
-    
-    // Create Stream
-    stream = NewFFmpegStream(song.url, Options{
-        Bitrate: 192k,
-        Channels: 2 (Stereo)
-    })
-    
-    // Play with Callback
-    voiceConn.Play(stream, OnFinish: () => {
-        PlayNext(guildID) // Recursive call
-    })
-```

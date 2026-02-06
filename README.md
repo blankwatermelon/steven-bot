@@ -10,13 +10,13 @@ A lightweight, high-performance Discord Music Bot built with TypeScript and Node
 *   **Latency Optimized**: Efficient queuing and searching via `TrackFactory`.
 *   **Queue System**: internal FIFO queue to manage playlists per server with "Upcoming" display.
 *   **Resiliency**: Auto-reconnects to voice channels with secure backoff logic.
-*   **TypeScript**: Built with type safety, DAVE protocol support, and modern ES standards.
+*   **TypeScript**: Built with type safety and modern ES standards.
 
 ## 🚀 Prerequisites
 
 *   **Node.js**: v18.0.0 or higher.
 *   **Python**: Required for `yt-dlp` (extracts audio).
-*   **FFmpeg**: Required for audio transcoding (handled via `ffmpeg-static`).
+*   **FFmpeg**: Required by `yt-dlp` but handled internally via `ffmpeg-static` for Node.js presence.
 *   **Discord Bot Token**: You need a valid token from the [Discord Developer Portal](https://discord.com/developers/applications).
 
 ## 🛠️ Installation & Setup

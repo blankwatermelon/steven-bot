@@ -41,6 +41,7 @@ export class TrackFactory {
                 noCheckCertificates: true,
                 defaultSearch: 'ytsearch1',
                 format: 'bestaudio',
+                noPlaylist: true,
             });
 
             let videoInfo: any;

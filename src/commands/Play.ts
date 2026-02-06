@@ -13,7 +13,7 @@ export const PlayCommand: Command = {
                 .setDescription('The URL or search term')
                 .setRequired(true)),
 	execute: async (interaction) => {
-        await interaction.deferReply();
+        await interaction.reply(' **Hold up im cookin...**');
 
         if (!interaction.guildId) return;
 
@@ -39,6 +39,7 @@ export const PlayCommand: Command = {
             subscription = new MusicSubscription(connection);
             subscription.voiceConnection.on('error', console.warn);
             subscriptions.set(interaction.guildId, subscription);
+            (interaction.channel as any)?.send('Ni howdy!');
         }
 
         // Make sure the connection is ready before processing the user's request
