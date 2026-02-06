@@ -8,23 +8,15 @@ import {
 	VoiceConnection,
 	VoiceConnectionDisconnectReason,
 	VoiceConnectionStatus,
+    StreamType,
 } from '@discordjs/voice';
-import youtubedl from 'youtube-dl-exec';
 import { GuildMember, Snowflake } from 'discord.js';
+import { Track, TrackFactory } from './Track';
 
 /**
  * Maps guild IDs to music subscriptions, which exist if the bot has an active VoiceConnection to the guild.
  */
 export const subscriptions = new Map<Snowflake, MusicSubscription>();
-
-export interface Track {
-	url: string;
-	title: string;
-    streamUrl?: string;
-	onStart?: () => void;
-	onFinish?: () => void;
-	onError?: (error: Error) => void;
-}
 
 /**
  * A MusicSubscription exists for each active VoiceConnection. Each subscription has its own audio player and queue,
@@ -36,6 +28,7 @@ export class MusicSubscription {
 	public queue: Track[];
 	public queueLock = false;
 	public readyLock = false;
+    private disconnectTimeout: NodeJS.Timeout | null = null;
 
 	public constructor(voiceConnection: VoiceConnection) {
 		this.voiceConnection = voiceConnection;
@@ -100,11 +93,15 @@ export class MusicSubscription {
 				// If the Idle state is entered from a non-Idle state, it means that an audio resource has finished playing.
 				// The queue is then processed to start playing the next track.
 				(oldState.resource as AudioResource<Track>).metadata.onFinish?.();
+                this.startDisconnectTimer();
 				this.processQueue();
 			} else if (newState.status === AudioPlayerStatus.Playing) {
 				// If the Playing state has been entered, then a new track has started playback.
 				(newState.resource as AudioResource<Track>).metadata.onStart?.();
-			}
+                this.stopDisconnectTimer();
+			} else if (newState.status === AudioPlayerStatus.Buffering || newState.status === AudioPlayerStatus.Paused) {
+                this.stopDisconnectTimer();
+            }
 		});
 
 		this.audioPlayer.on('error', (error) => {
@@ -113,7 +110,26 @@ export class MusicSubscription {
 		});
 
 		voiceConnection.subscribe(this.audioPlayer);
+        this.startDisconnectTimer();
 	}
+
+    private startDisconnectTimer() {
+        if (this.disconnectTimeout) return;
+        if (this.voiceConnection.state.status === VoiceConnectionStatus.Destroyed) return;
+        
+        this.disconnectTimeout = setTimeout(() => {
+            console.log('[Subscription] Inactivity timeout, destroying connection');
+            this.voiceConnection.destroy();
+            subscriptions.delete(this.voiceConnection.joinConfig.guildId);
+        }, 30_000);
+    }
+
+    private stopDisconnectTimer() {
+        if (this.disconnectTimeout) {
+            clearTimeout(this.disconnectTimeout);
+            this.disconnectTimeout = null;
+        }
+    }
 
 	/**
 	 * Adds a new Track to the queue.
@@ -156,24 +172,14 @@ export class MusicSubscription {
 			// Attempt to convert the Track into an AudioResource (i.e. start streaming)
             console.log(`[Subscription] Processing track: ${nextTrack.url} - ${nextTrack.title}`);
 
-            let streamUrl = nextTrack.streamUrl;
-
-            if (!streamUrl) {
-                 console.log(`[Subscription] Stream URL not found in track, fetching...`);
-                 // Get the direct audio url
-                const output = await youtubedl(nextTrack.url, {
-                    getUrl: true,
-                    format: 'bestaudio',
-                    noWarnings: true,
-                    noCheckCertificates: true
-                });
-                streamUrl = output.toString().trim();
-            }
-            // console.log(`[Subscription] Stream URL: ${streamUrl}`);
+            const stream = TrackFactory.getStream(nextTrack.url);
 			
-			const resource = createAudioResource(streamUrl!, {
+			const resource = createAudioResource(stream, {
 				metadata: nextTrack,
+                inputType: StreamType.WebmOpus,
+                inlineVolume: true
 			});
+            resource.volume?.setVolume(0.3);
 			
 			this.audioPlayer.play(resource);
 			this.queueLock = false;
