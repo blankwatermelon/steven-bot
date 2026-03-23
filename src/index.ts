@@ -1,5 +1,6 @@
 import { Client, Events, GatewayIntentBits, Interaction } from 'discord.js';
 import ffmpeg from 'ffmpeg-static';
+import http from 'http';
 
 // Load environment variables
 import dotenv from 'dotenv';
@@ -11,6 +12,13 @@ if (ffmpeg) {
     const ffmpegDir = path.dirname(ffmpeg);
     process.env.PATH = `${ffmpegDir}:${process.env.PATH}`;
 }
+
+// Simple HTTP server for platform health checks (Remoud/etc require a listening port)
+const PORT = parseInt(process.env.PORT || '8080', 10);
+http.createServer((_, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('steven-bot is running');
+}).listen(PORT, () => console.log(`Health check server listening on port ${PORT}`));
 
 const token = process.env.DISCORD_TOKEN;
 
