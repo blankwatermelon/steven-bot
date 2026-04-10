@@ -1,4 +1,4 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { joinVoiceChannel, entersState, VoiceConnectionStatus } from '@discordjs/voice';
 import { Command } from '../interfaces/Command';
 import { MusicSubscription, subscriptions } from '../music/Subscription';
@@ -13,7 +13,8 @@ export const PlayCommand: Command = {
                 .setDescription('The URL or search term')
                 .setRequired(true)),
 	execute: async (interaction) => {
-        await interaction.reply(' **Hold up im cookin...**');
+        await interaction.reply({ content: ' **Hold up im cookin...**', flags: MessageFlags.Ephemeral });
+        setTimeout(() => interaction.deleteReply().catch(console.warn), 5000);
 
         if (!interaction.guildId) return;
 
@@ -76,7 +77,8 @@ export const PlayCommand: Command = {
                     subscription.enqueue(track);
                 }
 
-                await interaction.followUp(`Queued **${queries.length}** tracks from **${name}**!`);
+                const queueMsg = await interaction.followUp({ content: `Queued **${queries.length}** tracks from **${name}**!`, flags: MessageFlags.Ephemeral });
+                setTimeout(() => interaction.webhook.deleteMessage(queueMsg.id).catch(console.warn), 5000);
                 return;
             }
 
@@ -100,7 +102,8 @@ export const PlayCommand: Command = {
             };
 
             subscription.enqueue(track);
-            await interaction.followUp(`Enqueued **${trackData.title}**`);
+            const enqueueMsg = await interaction.followUp({ content: `Enqueued **${trackData.title}**`, flags: MessageFlags.Ephemeral });
+            setTimeout(() => interaction.webhook.deleteMessage(enqueueMsg.id).catch(console.warn), 5000);
 
         } catch (error) {
             console.error(error);

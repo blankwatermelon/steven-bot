@@ -45,8 +45,10 @@ export const CleanCommand: Command = {
 
             if (deleted === 0) {
                 await interaction.editReply('No messages to clean up!');
+                setTimeout(() => interaction.deleteReply().catch(console.warn), 5000);
             } else {
                 await interaction.editReply(`Cleaned up ${deleted} message${deleted === 1 ? '' : 's'}!`);
+                setTimeout(() => interaction.deleteReply().catch(console.warn), 5000);
             }
         } catch (err) {
             await interaction.editReply('Failed to delete messages. Check my permissions.');

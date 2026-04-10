@@ -151,6 +151,24 @@ export class MusicSubscription {
 	}
 
 	/**
+	 * Pre-resolves the next queued track's search query to a YouTube URL in the background,
+	 * so processQueue doesn't stall waiting for yt-dlp when the current track finishes.
+	 */
+	private preResolveNext(): void {
+		const next = this.queue[0];
+		if (!next || next.url.startsWith('http')) return;
+
+		const originalQuery = next.url;
+		TrackFactory.getVideoData(originalQuery).then(resolved => {
+			if (resolved && this.queue[0]?.url === originalQuery) {
+				this.queue[0].url = resolved.url;
+				this.queue[0].title = resolved.title;
+				console.log(`[Subscription] Pre-resolved: ${resolved.title}`);
+			}
+		}).catch(console.warn);
+	}
+
+	/**
 	 * Attempts to play a Track from the queue.
 	 */
 	private async processQueue(): Promise<void> {
@@ -189,12 +207,11 @@ export class MusicSubscription {
 			const resource = createAudioResource(stream, {
 				metadata: nextTrack,
                 inputType: StreamType.WebmOpus,
-                inlineVolume: true
 			});
-            resource.volume?.setVolume(0.3);
-			
+
 			this.audioPlayer.play(resource);
 			this.queueLock = false;
+            this.preResolveNext();
 		} catch (error) {
 			// If an error occurred, try the next item of the queue instead
 			nextTrack.onError?.(error as Error);

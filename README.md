@@ -9,6 +9,9 @@ A lightweight, high-performance Discord music bot built with TypeScript and Node
 - **Spotify support**: Play individual Spotify track URLs or queue entire playlists and albums (up to 100 tracks).
 - **Queue system**: Per-server FIFO queue with upcoming track display.
 - **Reliable streaming**: Audio piped directly from `yt-dlp` as a raw stream — no premature cutoffs or buffering issues.
+- **Low-latency track transitions**: The next track in the queue is pre-resolved in the background while the current track plays, minimizing the gap between tracks.
+- **Clean audio**: WebM/Opus audio is passed to Discord without re-encoding, preserving the original quality.
+- **Ephemeral responses**: `/play` status messages (queuing, enqueuing) are only visible to the command sender and auto-delete after 5 seconds. Error messages remain visible in the channel.
 - **Channel cleanup**: `/clean` removes all bot messages in a channel, paginating through full history and handling both recent and older messages.
 - **Auto-disconnect**: Destroys the voice connection and clears the queue on `/leave`.
 
@@ -69,11 +72,11 @@ node dist/index.js
 
 | Command | Description |
 | :--- | :--- |
-| `/play song:<query>` | Plays a track or queues it if something is already playing. Accepts a YouTube URL, a plain-text search term, a Spotify track URL, or a Spotify playlist/album URL. |
+| `/play song:<query>` | Plays a track or queues it if something is already playing. Accepts a YouTube URL, a plain-text search term, a Spotify track URL, or a Spotify playlist/album URL. Status messages (queuing, enqueued) are ephemeral and auto-delete after 5 seconds; error messages remain public. |
 | `/skip` | Skips the currently playing track and advances the queue. |
 | `/queue` | Shows the currently playing track and up to 5 upcoming tracks. |
 | `/leave` | Stops playback, clears the queue, and disconnects from the voice channel. |
-| `/clean` | Deletes all messages sent by the bot in the current channel. Requires the **Manage Messages** permission. Response is ephemeral (only visible to the user who ran the command). |
+| `/clean` | Deletes all messages sent by the bot in the current channel. Requires the **Manage Messages** permission. Result message is ephemeral (only visible to the user who ran the command) and auto-deletes after 5 seconds. |
 
 ### `/play` input types
 
@@ -89,7 +92,7 @@ node dist/index.js
 1. A user runs `/play` with a query.
 2. `TrackFactory.getVideoData` resolves the query — Spotify URLs are converted to a `"artist - title lyrics"` search string; plain-text queries have `lyrics` appended; YouTube URLs are used as-is.
 3. `yt-dlp` fetches video metadata and selects the best audio format (`bestaudio[ext=webm][acodec=opus][asr=48000]`).
-4. When a track begins playback, `TrackFactory.getStream` spawns a `yt-dlp` subprocess and pipes its stdout directly into FFmpeg, which transcodes the stream to Opus packets.
+4. When a track begins playback, `TrackFactory.getStream` spawns a `yt-dlp` subprocess and pipes its stdout — a WebM/Opus stream — directly to `@discordjs/voice` without re-encoding. In parallel, the next track in the queue is pre-resolved in the background.
 5. `@discordjs/voice` encrypts and transmits the Opus packets to Discord's voice servers over UDP.
 
 ## Dependencies
