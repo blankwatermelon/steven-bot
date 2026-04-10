@@ -170,6 +170,18 @@ export class MusicSubscription {
 
 		try {
 			// Attempt to convert the Track into an AudioResource (i.e. start streaming)
+            // If url is not a real URL (e.g. a Spotify playlist search query), resolve it first.
+            if (!nextTrack.url.startsWith('http')) {
+                const resolved = await TrackFactory.getVideoData(nextTrack.url);
+                if (!resolved) {
+                    nextTrack.onError?.(new Error(`Could not resolve track: ${nextTrack.title}`));
+                    this.queueLock = false;
+                    return this.processQueue();
+                }
+                nextTrack.url = resolved.url;
+                nextTrack.title = resolved.title;
+            }
+
             console.log(`[Subscription] Processing track: ${nextTrack.url} - ${nextTrack.title}`);
 
             const stream = TrackFactory.getStream(nextTrack.url);

@@ -1,4 +1,4 @@
-import { Client, Events, GatewayIntentBits, Interaction } from 'discord.js';
+import { Client, Events, GatewayIntentBits, Interaction, MessageFlags } from 'discord.js';
 import ffmpeg from 'ffmpeg-static';
 import http from 'http';
 
@@ -28,16 +28,17 @@ if (!token) {
 }
 
 const client = new Client({
-	intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates],
+	intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages],
 });
 
 import { PlayCommand }  from './commands/Play';
 import { SkipCommand }  from './commands/Skip';
 import { LeaveCommand } from './commands/Leave';
 import { QueueCommand } from './commands/Queue';
+import { CleanCommand } from './commands/Clean';
 import { Command } from './interfaces/Command';
 
-const commands = [PlayCommand, SkipCommand, LeaveCommand, QueueCommand];
+const commands = [PlayCommand, SkipCommand, LeaveCommand, QueueCommand, CleanCommand];
 const commandMap = new Map<string, Command>();
 
 for (const command of commands) {
@@ -67,9 +68,9 @@ client.on(Events.InteractionCreate, async (interaction: Interaction) => {
 		console.error(error);
 		try {
 			if (interaction.replied || interaction.deferred) {
-				await interaction.followUp({ content: 'There was an error while executing this command!', ephemeral: true });
+				await interaction.followUp({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
 			} else {
-				await interaction.reply({ content: 'There was an error while executing this command!', ephemeral: true });
+				await interaction.reply({ content: 'There was an error while executing this command!', flags: MessageFlags.Ephemeral });
 			}
 		} catch (followUpError) {
 			console.error('Error while handling command error:', followUpError);

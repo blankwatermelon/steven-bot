@@ -2,7 +2,7 @@ import { SlashCommandBuilder } from 'discord.js';
 import { joinVoiceChannel, entersState, VoiceConnectionStatus } from '@discordjs/voice';
 import { Command } from '../interfaces/Command';
 import { MusicSubscription, subscriptions } from '../music/Subscription';
-import { Track, TrackFactory } from '../music/Track';
+import { Track, TrackFactory, isSpotifyPlaylistUrl } from '../music/Track';
 
 export const PlayCommand: Command = {
 	data: new SlashCommandBuilder()
@@ -52,6 +52,34 @@ export const PlayCommand: Command = {
 		}
 
         try {
+            if (isSpotifyPlaylistUrl(query)) {
+                const { name, queries } = await TrackFactory.resolveSpotifyPlaylist(query);
+
+                if (queries.length === 0) {
+                    await interaction.followUp('Diu, that playlist is empty or unavailable!');
+                    return;
+                }
+
+                for (const q of queries) {
+                    const track: Track = {
+                        url: q,
+                        title: q,
+                        onStart: () => {
+                            (interaction.channel as any)?.send(`Now singing **${track.title}**!`).catch(console.warn);
+                        },
+                        onFinish: () => {},
+                        onError: (error) => {
+                            console.warn(error);
+                            (interaction.channel as any)?.send(`Diu, error singing **${track.title}**!`).catch(console.warn);
+                        },
+                    };
+                    subscription.enqueue(track);
+                }
+
+                await interaction.followUp(`Queued **${queries.length}** tracks from **${name}**!`);
+                return;
+            }
+
             const trackData = await TrackFactory.getVideoData(query);
 
             if (!trackData) {
@@ -64,13 +92,11 @@ export const PlayCommand: Command = {
                 onStart: () => {
                     (interaction.channel as any)?.send(`Now singing **${trackData.title}**!`).catch(console.warn);
                 },
-                onFinish: () => {
-                   // Optional: Notify when finished
-                },
+                onFinish: () => {},
                 onError: (error) => {
                     console.warn(error);
                     (interaction.channel as any)?.send(`Diu, error singing **${trackData.title}**!`).catch(console.warn);
-                } 
+                }
             };
 
             subscription.enqueue(track);
