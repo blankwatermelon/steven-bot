@@ -20,7 +20,7 @@ export const QueueCommand: Command = {
 
 			const queue = subscription.queue
 				.slice(0, 5)
-				.map((track, index) => `${index + 1}) ${track.title}`)
+				.map((track, index) => `${index + 1}) ${track.title}${track.queuedBy ? ` — queued by **${track.queuedBy}**` : ''}`)
 				.join('\n');
 
 			await interaction.reply(`whats up next cousin?\n\n${queue}\n\n${current}`);

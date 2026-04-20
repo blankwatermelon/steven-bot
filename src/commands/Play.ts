@@ -65,6 +65,7 @@ export const PlayCommand: Command = {
                     const track: Track = {
                         url: q,
                         title: q,
+                        queuedBy: interaction.user.username,
                         onStart: () => {
                             (interaction.channel as any)?.send(`Now singing **${track.title}**!`).catch(console.warn);
                         },
@@ -77,8 +78,7 @@ export const PlayCommand: Command = {
                     subscription.enqueue(track);
                 }
 
-                const queueMsg = await interaction.followUp({ content: `Queued **${queries.length}** tracks from **${name}**!`, flags: MessageFlags.Ephemeral });
-                setTimeout(() => interaction.webhook.deleteMessage(queueMsg.id).catch(console.warn), 5000);
+                await interaction.followUp(`Queued **${queries.length}** tracks from **${name}**! (queued by **${interaction.user.username}**)`);
                 return;
             }
 
@@ -91,6 +91,7 @@ export const PlayCommand: Command = {
 
             const track: Track = {
                 ...trackData,
+                queuedBy: interaction.user.username,
                 onStart: () => {
                     (interaction.channel as any)?.send(`Now singing **${trackData.title}**!`).catch(console.warn);
                 },
@@ -102,8 +103,7 @@ export const PlayCommand: Command = {
             };
 
             subscription.enqueue(track);
-            const enqueueMsg = await interaction.followUp({ content: `Enqueued **${trackData.title}**`, flags: MessageFlags.Ephemeral });
-            setTimeout(() => interaction.webhook.deleteMessage(enqueueMsg.id).catch(console.warn), 5000);
+            await interaction.followUp(`Enqueued **${trackData.title}** (queued by **${interaction.user.username}**)`);
 
         } catch (error) {
             console.error(error);

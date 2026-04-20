@@ -15,6 +15,7 @@ export interface Track {
 	url: string;
 	title: string;
     streamUrl?: string; // Pre-fetched stream URL if available
+    queuedBy?: string;
 	onStart: () => void;
 	onFinish: () => void;
 	onError: (error: Error) => void;
